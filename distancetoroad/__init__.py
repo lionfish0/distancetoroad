@@ -117,8 +117,8 @@ class DistanceToRoad():
             print("%4d%%" % (int(100*(xi+1)/len(xs))),end="\r")
             for yi,y in enumerate(ys):
                 #allps.append([x,y])
-                #allds.append(dtr.compute_mindist([x,y]))
-                distancegrid[xi,yi] = dtr.compute_mindist([x,y])
+                #allds.append(self.compute_mindist([x,y]))
+                distancegrid[xi,yi] = self.compute_mindist([x,y])
         import pickle
         pickle.dump({'distancegrid':distancegrid,'spacing':self.spacing,'box':self.box},open(self.cachename,'wb'))
         self.distancegrid = distancegrid
