@@ -5,7 +5,16 @@ import overpy
 import pickle
 
 class DistanceToRoad():
-    def download(self,x0,y0,x1,y1,crs_proj,spacing=50,margin=0.1,refreshcache=False):
+    def download(self,x0,y0,x1,y1,crs_proj,spacing=50,margin=0.01,refreshcache=False):
+        """
+        Downloads the OSM map data from the overpass API, computes a grid of road distances and caches it.
+        x0,y0,x1,y1 = the bounding box of the grid
+        crs_proj = the coordinate system appropriate for the location to convert the lat/long to (for computing distances). Hopefully one in metres easting/northing.
+        spacing = distance between grid points.
+        margin = degrees of lat/long to add around the edge of the box, to try and ensure we get the true distance to roads that are not necessarily in the box.
+        refreshcache = whether to force the system to download the data again and rebuild. This also populates variables such as self.converted_ways which
+                       you might want to use for debugging, but are not saved in the cache.
+        """
         crs_4326 = CRS("WGS84")
         self.crs_proj = crs_proj
         transformer = Transformer.from_crs(crs_4326, crs_proj)
@@ -16,12 +25,12 @@ class DistanceToRoad():
             try:
                 cache_data = pickle.load(open(self.cachename,'rb'))
                 self.distancegrid = cache_data['distancegrid']
-                print("Cache hit")
+                print("Using cached data.")
                 return
             except FileNotFoundError:
                 refreshcache = True
         if refreshcache:
-            print("Cache miss")
+            print("Cache not found. Downloading from OSM Overpass...")
             api = overpy.Overpass()
             #self.box = [x0,y0,x1,y1]
             api_query_string = """
@@ -40,7 +49,7 @@ class DistanceToRoad():
             """.format(x0=x0-margin,y0=y0-margin,x1=x1+margin,y1=y1+margin)
             self.api_query_result = api.query(api_query_string)
             #proj = pyproj.Proj(init='epsg:3857') #EPSG:3857 -- WGS84 Web Mercator [used by websites]
-            
+            print("Download complete. Transforming coordinate system.")
             self.converted_ways = []
             
             for way in self.api_query_result.ways:
@@ -50,7 +59,9 @@ class DistanceToRoad():
                 path = np.array([[float(n.lat),float(n.lon)] for n in way.nodes])
                 self.converted_ways.append(np.c_[transformer.transform(path[:,0],path[:,1])])
             
+            print("Building cache boxes")
             self.compute_cacheboxes()
+            print("Building distance grid")
             self.compute_distancegrid()
     
     def lineseg_dists(self, p, a, b):
@@ -84,12 +95,18 @@ class DistanceToRoad():
         return np.hypot(h, c)   
     
     def compute_cacheboxes(self):
+        """
+        To speed up computation a little we build boxes around each way, and test these first.
+        """
         self.cachedboxes = []
         for path in self.converted_ways:
             mina,maxa = np.min(path,0),np.max(path,0)
             self.cachedboxes.append(np.array([mina,np.array([mina[0],maxa[1]]),maxa,np.array([maxa[0],mina[1]]),mina]))
 
     def compute_mindist(self,p):
+        """
+        Computes distance from point p to nearest path
+        """
         mindists = []
         maxdists = []
         for box in self.cachedboxes:
@@ -107,6 +124,9 @@ class DistanceToRoad():
         return mindist  
     
     def compute_distancegrid(self):
+        """
+        Computes and caches the distance from all the points on the grid to all the roads.
+        """
         
         xs = np.arange(self.box[0,0],self.box[1,0],self.spacing)
         ys = np.arange(self.box[0,1],self.box[1,1],self.spacing)
@@ -114,7 +134,7 @@ class DistanceToRoad():
         #allps = []
         #allds = []
         for xi,x in enumerate(xs):
-            print("%4d%%" % (int(100*(xi+1)/len(xs))),end="\r")
+            print("%4d%% (%d/%d)      " % (int(100*(xi+1)/len(xs)),xi+1,len(xs)),end="\r")
             for yi,y in enumerate(ys):
                 #allps.append([x,y])
                 #allds.append(self.compute_mindist([x,y]))
@@ -124,6 +144,9 @@ class DistanceToRoad():
         self.distancegrid = distancegrid
     
     def get_dist(self,p):
+        """
+        using the cached grid interpolate the shortest distance
+        """
         index = ((p-self.box[0,:])/self.spacing).astype(int)
         ratio = ((p-self.box[0,:]) % self.spacing)/self.spacing
         #return (self.distancegrid[index[0]+1,index[1]]*ratio[0]+self.distancegrid[index[0],index[1]]*(1-ratio[0]))*(1-ratio[1])+self.distancegrid[index[0]+1,index[1]+1]*ratio[0]+self.distancegrid[index[0],index[1]+1]*(1-ratio[0])*(ratio[1])
