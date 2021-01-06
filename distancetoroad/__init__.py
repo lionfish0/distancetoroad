@@ -12,8 +12,7 @@ class DistanceToRoad():
         crs_proj = the coordinate system appropriate for the location to convert the lat/long to (for computing distances). Hopefully one in metres easting/northing.
         spacing = distance between grid points.
         margin = degrees of lat/long to add around the edge of the box, to try and ensure we get the true distance to roads that are not necessarily in the box.
-        refreshcache = whether to force the system to download the data again and rebuild. This also populates variables such as self.converted_ways which
-                       you might want to use for debugging, but are not saved in the cache.
+        refreshcache = whether to force the system to download the data again and rebuild. 
         """
         crs_4326 = CRS("WGS84")
         self.crs_proj = crs_proj
@@ -25,6 +24,7 @@ class DistanceToRoad():
             try:
                 cache_data = pickle.load(open(self.cachename,'rb'))
                 self.distancegrid = cache_data['distancegrid']
+                self.converted_ways = cache_data['converted_ways']
                 print("Using cached data.")
                 return
             except FileNotFoundError:
@@ -58,9 +58,7 @@ class DistanceToRoad():
 
                 path = np.array([[float(n.lat),float(n.lon)] for n in way.nodes])
                 self.converted_ways.append(np.c_[transformer.transform(path[:,0],path[:,1])])
-            
-            print("Building cache boxes")
-            self.compute_cacheboxes()
+        
             print("Building distance grid")
             self.compute_distancegrid()
     
@@ -74,6 +72,7 @@ class DistanceToRoad():
             - a: np.array of shape (x, 2)
             - b: np.array of shape (x, 2)
         """
+        
         # normalized tangent vectors
         d_ba = b - a
         d = np.divide(d_ba, (np.hypot(d_ba[:, 0], d_ba[:, 1])
@@ -94,31 +93,14 @@ class DistanceToRoad():
 
         return np.hypot(h, c)   
     
-    def compute_cacheboxes(self):
-        """
-        To speed up computation a little we build boxes around each way, and test these first.
-        """
-        self.cachedboxes = []
-        for path in self.converted_ways:
-            mina,maxa = np.min(path,0),np.max(path,0)
-            self.cachedboxes.append(np.array([mina,np.array([mina[0],maxa[1]]),maxa,np.array([maxa[0],mina[1]]),mina]))
-
     def compute_mindist(self,p):
         """
         Computes distance from point p to nearest path
         """
-        mindists = []
-        maxdists = []
-        for box in self.cachedboxes:
-            mindists.append(np.min(self.lineseg_dists(p,box[:-1,:],box[1:,:])**2))
-            maxdists.append(np.max(np.sum((p-box[:-1,:])**2,1)))
-
-        check = mindists<np.min(maxdists)
         mindist = np.inf
-        for c,path in zip(check,self.converted_ways):
-        #for path in self.converted_ways:
-            if not c: continue 
-            d = np.min(self.lineseg_dists(p,path[0:-1,:],path[1:,:]))
+        for path in self.converted_ways:
+            ls = self.lineseg_dists(p,path[0:-1,:],path[1:,:])
+            d = np.min(ls)
             if d<mindist:
                 mindist=d
         return mindist  
@@ -140,7 +122,7 @@ class DistanceToRoad():
                 #allds.append(self.compute_mindist([x,y]))
                 distancegrid[xi,yi] = self.compute_mindist([x,y])
         import pickle
-        pickle.dump({'distancegrid':distancegrid,'spacing':self.spacing,'box':self.box},open(self.cachename,'wb'))
+        pickle.dump({'distancegrid':distancegrid,'converted_ways':self.converted_ways,'spacing':self.spacing,'box':self.box},open(self.cachename,'wb'))
         self.distancegrid = distancegrid
     
     def get_dist(self,p):
